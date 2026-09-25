@@ -18,7 +18,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # of the product and file versions while build-number is used as the build suffix.
 # 版本号规则：次版本号 = 开发阶段号，补丁号 = 该阶段内的修订轮次，
 # 构建号 = 只增不减的序号。手机「功能表 → 设置」里能看到，用来分辨装的是哪个包。
-version: 1.8.3+11
+version: 1.9.0+12
 
 environment:
   sdk: ^3.8.1

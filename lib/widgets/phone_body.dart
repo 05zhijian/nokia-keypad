@@ -82,6 +82,7 @@ class PhoneBody extends StatelessWidget {
                               width: screenRect.width,
                               height: screenHeight,
                               lines: lcd.lines,
+                              grid: lcd.grid,
                               highlightedLine: lcd.highlightedLine,
                               softLeft: lcd.softLeft,
                               softRight: lcd.softRight,

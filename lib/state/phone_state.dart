@@ -7,6 +7,7 @@ enum MenuAction {
   callLog,
   nokiaTune,
   blankRingtone,
+  snake,
   settings,
   fakeCall,
 }
@@ -50,6 +51,7 @@ const rootMenu = <MenuNode>[
   ]),
   ActionNode('设置', MenuAction.settings),
   ActionNode('假来电', MenuAction.fakeCall),
+  ActionNode('贪吃蛇', MenuAction.snake),
 ];
 
 /// 收件箱里那条短信的正文。
@@ -167,6 +169,11 @@ class Calling extends PhoneUiState {
   final String number;
 }
 
+/// 贪吃蛇。游戏本身的状态在 [PhoneController] 里，这一屏只是个标记。
+class SnakeOpen extends PhoneUiState {
+  const SnakeOpen();
+}
+
 /// 菜单里还没实现的功能。留着是为了让导航层级现在就能走通。
 class NotImplemented extends PhoneUiState {
   const NotImplemented(this.title);
@@ -177,7 +184,8 @@ class NotImplemented extends PhoneUiState {
 /// 一屏要显示的全部内容。由 [PhoneController] 从状态映射出来，UI 只负责画。
 class LcdContent {
   const LcdContent({
-    required this.lines,
+    this.lines = const [],
+    this.grid,
     this.highlightedLine,
     this.softLeft = '',
     this.softRight = '',
@@ -187,7 +195,10 @@ class LcdContent {
 
   final List<String> lines;
 
-  /// 反白显示的行号（主菜单用）。
+  /// 点阵内容（贪吃蛇）。给了这个就画点阵，忽略 [lines]。
+  final LcdGrid? grid;
+
+  /// 反白显示的行号（主菜单、通讯录用）。
   final int? highlightedLine;
 
   final String softLeft;
@@ -196,7 +207,25 @@ class LcdContent {
   /// 状态栏是否显示信封图标。有未读短信时才亮。
   final bool showEnvelope;
 
-  /// 状态栏左上角的大小写提示（`ABC` / `abc`）。只在编辑态出现，
-  /// 真机上也是这样的。
+  /// 状态栏左上角的小字提示（`ABC` / `abc` / 游戏分数）。只在需要时出现。
   final String? capsLabel;
+}
+
+/// 一块单色点阵。
+///
+/// 屏幕本来就是像素网格，用字符拼图是绕远路——直接把格子给渲染层。
+class LcdGrid {
+  const LcdGrid({
+    required this.columns,
+    required this.rows,
+    required this.cells,
+  });
+
+  final int columns;
+  final int rows;
+
+  /// 行优先，每格是否点亮。
+  final List<bool> cells;
+
+  bool at(int x, int y) => cells[y * columns + x];
 }

@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nokia/audio/nokia_tune.dart';
+import 'package:nokia/game/snake_game.dart';
 import 'package:nokia/state/phone_state.dart';
 import 'package:nokia/theme/nokia_colors.dart';
 import 'package:nokia/theme/nokia_font.dart';
@@ -238,6 +241,24 @@ void main() {
     await expectLater(
       find.byKey(const ValueKey('keyRow')),
       matchesGoldenFile('goldens/keycaps_identical.png'),
+    );
+  });
+
+  testWidgets('贪吃蛇：点阵与边框', (tester) async {
+    // 点阵是这一屏独有的渲染路径（其余屏都是文字行），单独盯一张。
+    // 棋盘摆成确定的形状，不然快照每次都不同。
+    final game = SnakeGame(columns: 18, rows: 14, random: math.Random(7));
+    game.snake = [for (var i = 0; i < 8; i++) Cell(9 - i, 7)];
+    game.food = const Cell(14, 4);
+
+    await pumpScreen(
+      tester,
+      LcdContent(
+        grid: game.toGrid(),
+        softRight: '退出',
+        capsLabel: '分7',
+      ),
+      'goldens/phone_snake.png',
     );
   });
 

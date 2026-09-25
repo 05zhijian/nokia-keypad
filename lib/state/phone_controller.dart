@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../audio/audio_engine.dart';
 import '../audio/nokia_tune.dart';
 import '../contacts/contacts_source.dart';
+import '../game/snake_game.dart';
 import '../model/navi.dart';
 import '../model/nokia_key.dart';
 import '../model/note_token.dart';
@@ -63,12 +64,14 @@ class PhoneController extends ChangeNotifier {
 
   final _input = T9Input();
   final _composer = RingtoneComposer();
+  final _snake = SnakeGame();
 
   bool _hasUnread = true;
   Timer? _t9Timer;
   Timer? _callTimer;
   Timer? _connectTimer;
   Timer? _ringbackTimer;
+  Timer? _snakeTimer;
   int _callSeconds = 0;
   String _version = '';
 
@@ -84,6 +87,9 @@ class PhoneController extends ChangeNotifier {
   T9Input get input => _input;
 
   RingtoneComposer get composer => _composer;
+
+  /// 当前对局。暴露出来是为了让测试能直接断言棋盘状态。
+  SnakeGame get snake => _snake;
 
   bool get isPlaying => _playing;
 
@@ -105,6 +111,7 @@ class PhoneController extends ChangeNotifier {
     _callTimer?.cancel();
     _connectTimer?.cancel();
     _ringbackTimer?.cancel();
+    _snakeTimer?.cancel();
     _playToken++;
     super.dispose();
   }
@@ -118,6 +125,7 @@ class PhoneController extends ChangeNotifier {
 
   void _pop() {
     if (_stack.isEmpty) return;
+    _stopSnake();
     _stopPlayback();
     _stack.removeLast();
     notifyListeners();
@@ -138,6 +146,7 @@ class PhoneController extends ChangeNotifier {
     _callTimer?.cancel();
     _callTimer = null;
     _callSeconds = 0;
+    _stopSnake();
     _stopPlayback();
     _stack.clear();
     notifyListeners();
@@ -172,6 +181,10 @@ class PhoneController extends ChangeNotifier {
 
       case DialerOpen():
         placeCall();
+
+      case SnakeOpen():
+        // 玩的时候左软键是空的，只有结束了才是「重来」。
+        if (_snake.gameOver) startSnake();
 
       case ContactsOpen(:final status, :final names, :final selected):
         // 只有真读到人才能发起假来电——加载中、被拒授权、通讯录为空时，
@@ -239,6 +252,7 @@ class PhoneController extends ChangeNotifier {
       case SmsView():
       case MenuOpen():
       case ContactsOpen():
+      case SnakeOpen():
       case NotImplemented():
         _pop();
     }
@@ -325,6 +339,20 @@ class PhoneController extends ChangeNotifier {
         // 导航中键等同「呼叫」。
         if (direction == NaviDirection.select) placeCall();
 
+      case SnakeOpen():
+        switch (direction) {
+          case NaviDirection.up:
+            _turnSnake(Direction.up);
+          case NaviDirection.down:
+            _turnSnake(Direction.down);
+          case NaviDirection.left:
+            _turnSnake(Direction.left);
+          case NaviDirection.right:
+            _turnSnake(Direction.right);
+          case NaviDirection.select:
+            if (_snake.gameOver) startSnake();
+        }
+
       case MessageSent():
       case IncomingCall():
       case InCall():
@@ -346,6 +374,17 @@ class PhoneController extends ChangeNotifier {
       case ComposerOpen():
         _composerKey(key);
 
+      case SnakeOpen():
+        // 2/4/6/8 是方向——真机上除了导航键，这四个数字键也能控制方向。
+        final d = switch (key) {
+          NokiaKey.k2 => Direction.up,
+          NokiaKey.k4 => Direction.left,
+          NokiaKey.k6 => Direction.right,
+          NokiaKey.k8 => Direction.down,
+          _ => null,
+        };
+        if (d != null) _turnSnake(d);
+
       case DialerOpen(:final number):
         final char = _dialChar(key);
         // 号码有长度上限，和真机一样——一直按下去不该把屏幕撑爆。
@@ -366,7 +405,6 @@ class PhoneController extends ChangeNotifier {
         // 通话中按数字键也有 DTMF 音——那是按键本身发的，见 NokiaKeyButton，
         // 不需要这里再做什么，但也不该改变屏幕。
         break;
-
       case CallEnded():
         break;
     }
@@ -500,6 +538,49 @@ class PhoneController extends ChangeNotifier {
 
   static const _ringbackMidi = 69; // A4 = 440Hz
   static const _ringbackToneMs = 1000;
+
+  // ---- 贪吃蛇 ----
+
+  /// 开一局。进游戏就立刻开始跑，不用先按「开始」——真机也是这样。
+  void startSnake() {
+    _snake.reset();
+    if (state is SnakeOpen) {
+      _replaceTop(const SnakeOpen());
+    } else {
+      _push(const SnakeOpen());
+    }
+    _restartSnakeTimer();
+    notifyListeners();
+  }
+
+  /// 排下一步。
+  ///
+  /// 每走一步重排一次，而不是用 `Timer.periodic`——节拍会随分数变快
+  /// （见 [SnakeGame.tick]），固定周期改不了。
+  void _restartSnakeTimer() {
+    _snakeTimer?.cancel();
+    if (_snake.gameOver) {
+      _snakeTimer = null;
+      return;
+    }
+    _snakeTimer = Timer(_snake.tick, () {
+      if (state is! SnakeOpen) return;
+      _snake.step();
+      if (!_snake.gameOver) _restartSnakeTimer();
+      notifyListeners();
+    });
+  }
+
+  void _stopSnake() {
+    _snakeTimer?.cancel();
+    _snakeTimer = null;
+  }
+
+  /// 转向。导航键和 2/4/6/8 都走这里——真机上这两种方向键都支持。
+  void _turnSnake(Direction direction) {
+    _snake.turn(direction);
+    notifyListeners();
+  }
 
   // ---- 铃声编辑器 ----
 
@@ -676,6 +757,9 @@ class PhoneController extends ChangeNotifier {
             _composer.clear();
             _push(const ComposerOpen());
 
+          case MenuAction.snake:
+            startSnake();
+
           case MenuAction.fakeCall:
             // 不直接来电话，先让人选——整蛊时通常就是想指定某个人，
             // 随机来一个反而不好用。
@@ -729,10 +813,38 @@ class PhoneController extends ChangeNotifier {
 
   // ---- 状态 → 屏幕内容 ----
 
-  /// 通讯录屏的内容。
+  /// 以 [selected] 为中心，从 [all] 里开一个最多 [maxLcdLines] 行的窗口。
   ///
-  /// 通讯录可能几百条，一屏只放得下 [maxLcdLines] 行，所以要开一个
-  /// 以选中项为中心的窗口，并把选中项换算成窗口内的行号。
+  /// 主菜单和通讯录都可能超一屏——通讯录动辄几百条，主菜单加到第 6 项就满了。
+  /// 开窗口后选中项永远可见，行号换算成窗口内的相对位置。
+  ({List<String> lines, int highlighted}) _windowed(
+    List<String> all,
+    int selected,
+  ) {
+    if (all.length <= maxLcdLines) {
+      return (lines: all, highlighted: selected);
+    }
+    final start =
+        (selected - maxLcdLines ~/ 2).clamp(0, all.length - maxLcdLines);
+    return (
+      lines: all.sublist(start, start + maxLcdLines),
+      highlighted: selected - start,
+    );
+  }
+
+  /// 菜单屏的内容。
+  LcdContent _menuContent(List<MenuNode> items, int selected) {
+    final window = _windowed([for (final node in items) node.label], selected);
+    return LcdContent(
+      lines: window.lines,
+      highlightedLine: window.highlighted,
+      softLeft: '选择',
+      softRight: '退出',
+      showEnvelope: _hasUnread,
+    );
+  }
+
+  /// 通讯录屏的内容。
   LcdContent _contactsContent(
     ContactsStatus status,
     List<String> names,
@@ -755,21 +867,10 @@ class PhoneController extends ChangeNotifier {
         if (names.isEmpty) {
           return const LcdContent(lines: ['通讯录为空'], softRight: '返回');
         }
-
-        if (names.length <= maxLcdLines) {
-          return LcdContent(
-            lines: names,
-            highlightedLine: selected,
-            softLeft: '假来电',
-            softRight: '返回',
-          );
-        }
-
-        final start = (selected - maxLcdLines ~/ 2)
-            .clamp(0, names.length - maxLcdLines);
+        final window = _windowed(names, selected);
         return LcdContent(
-          lines: names.sublist(start, start + maxLcdLines),
-          highlightedLine: selected - start,
+          lines: window.lines,
+          highlightedLine: window.highlighted,
           softLeft: '假来电',
           softRight: '返回',
         );
@@ -804,13 +905,7 @@ class PhoneController extends ChangeNotifier {
         );
 
       case MenuOpen(:final items, :final selected):
-        return LcdContent(
-          lines: [for (final node in items) node.label],
-          highlightedLine: selected,
-          softLeft: '选择',
-          softRight: '退出',
-          showEnvelope: _hasUnread,
-        );
+        return _menuContent(items, selected);
 
       case Compose():
         return LcdContent(
@@ -884,6 +979,21 @@ class PhoneController extends ChangeNotifier {
             ...wrapForLcd(number, columns: lcdColumns).take(2),
           ],
           softRight: '挂断',
+        );
+
+      case SnakeOpen():
+        if (_snake.gameOver) {
+          return LcdContent(
+            lines: ['游戏结束', '', '得分 ${_snake.score}'],
+            softLeft: '重来',
+            softRight: '退出',
+          );
+        }
+        return LcdContent(
+          // 分数放状态栏，不占游戏区——玩的时候地方越大越好。
+          grid: _snake.toGrid(),
+          softRight: '退出',
+          capsLabel: '分${_snake.score}',
         );
 
       case MessageSent():

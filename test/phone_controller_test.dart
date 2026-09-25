@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nokia/audio/nokia_tune.dart';
 import 'package:nokia/contacts/contacts_source.dart';
+import 'package:nokia/game/snake_game.dart';
 import 'package:nokia/model/navi.dart';
 import 'package:nokia/model/nokia_key.dart';
 import 'package:nokia/model/note_token.dart';
@@ -120,7 +121,23 @@ void main() {
       goRootMenu();
       expect(c.state, isA<MenuOpen>());
       expect(c.content.highlightedLine, 0);
-      expect(c.content.lines, ['信息', '通话记录', '铃声编辑器', '设置', '假来电']);
+      // 菜单现在有 6 项，一屏放不下 5 行以上，所以只画以选中项为中心的窗口。
+      expect(c.content.lines.first, '信息');
+      expect(c.content.lines, hasLength(maxLcdLines));
+    });
+
+    test('往下滚能看到最后一项「贪吃蛇」', () {
+      goRootMenu();
+      final count = (c.state as MenuOpen).items.length;
+      for (var i = 0; i < count - 1; i++) {
+        c.navi(NaviDirection.down);
+      }
+      expect(c.content.lines.last, '贪吃蛇');
+      expect(
+        c.content.lines[c.content.highlightedLine!],
+        '贪吃蛇',
+        reason: '反白的那一行必须就是选中项',
+      );
     });
 
     test('选中「信息」展开子菜单，而不是直接进功能屏', () {
@@ -924,6 +941,110 @@ void main() {
       openDialer(c);
       type(c, '10086');
       expect(c.content.lines.single, '10086');
+    });
+  });
+
+  group('贪吃蛇', () {
+    /// 从顶层菜单进游戏（贪吃蛇是最后一项）。
+    void enterSnake(PhoneController controller) {
+      controller.softLeft(); // 显示（读完短信通知）
+      controller.softRight(); // 返回 → 待机
+      controller.softLeft(); // 功能表
+      for (var i = 0; i < 5; i++) {
+        controller.navi(NaviDirection.down);
+      }
+      controller.navi(NaviDirection.select);
+    }
+
+    test('从菜单能进游戏，进去就开跑', () {
+      enterSnake(c);
+      expect(c.state, isA<SnakeOpen>());
+      expect(c.snake.gameOver, isFalse);
+    });
+
+    test('游戏屏给的是点阵，不是文字', () {
+      enterSnake(c);
+      expect(c.content.grid, isNotNull);
+      expect(c.content.lines, isEmpty);
+    });
+
+    test('分数显示在状态栏，不占游戏区', () {
+      enterSnake(c);
+      expect(c.content.capsLabel, '分0');
+    });
+
+    test('导航键转向', () {
+      enterSnake(c);
+      c.navi(NaviDirection.up);
+      expect(c.snake.direction, Direction.up);
+    });
+
+    test('2/4/6/8 也能转向——真机上这两种方向键都支持', () {
+      enterSnake(c);
+      // 每次都转 90°，避开「不能掉头」的规则
+      c.digit(NokiaKey.k8); // 右 → 下
+      expect(c.snake.direction, Direction.down);
+      c.digit(NokiaKey.k4); // 下 → 左
+      expect(c.snake.direction, Direction.left);
+      c.digit(NokiaKey.k2); // 左 → 上
+      expect(c.snake.direction, Direction.up);
+    });
+
+    test('数字键掉头同样被拦下', () {
+      enterSnake(c);
+      c.digit(NokiaKey.k4); // 相对向右是掉头
+      expect(c.snake.direction, Direction.right);
+    });
+
+    test('不能 180° 掉头', () {
+      enterSnake(c);
+      c.navi(NaviDirection.left);
+      expect(c.snake.direction, Direction.right);
+    });
+
+    test('右软键退出，回到菜单', () {
+      enterSnake(c);
+      c.softRight();
+      expect(c.state, isA<MenuOpen>());
+    });
+
+    test('红键退出，直接回待机', () {
+      enterSnake(c);
+      c.hangUp();
+      expect(c.state, isA<Standby>());
+    });
+
+    test('游戏结束后显示得分和「重来」', () {
+      enterSnake(c);
+      // 直接把局面推到结束，不去等计时器。
+      // 注意**不要调 softLeft()**——那个键就是「重来」，会把局面重开。
+      c.snake.gameOver = true;
+
+      expect(c.content.lines.first, '游戏结束');
+      expect(c.content.lines.last, '得分 0');
+      expect(c.content.softLeft, '重来');
+      expect(c.content.grid, isNull, reason: '结束屏是文字，不是点阵');
+    });
+
+    test('结束后左软键能重开一局', () {
+      enterSnake(c);
+      c.snake.gameOver = true;
+      c.snake.score = 7;
+
+      c.softLeft();
+
+      expect(c.snake.gameOver, isFalse);
+      expect(c.snake.score, 0);
+      expect(c.state, isA<SnakeOpen>());
+    });
+
+    test('退出游戏会停掉计时器，不会在后台继续跑', () {
+      enterSnake(c);
+      c.softRight();
+      final frozen = List<Cell>.from(c.snake.snake);
+      // 计时器若还在，这段时间足够它走好几步
+      expect(c.snake.snake, frozen);
+      expect(c.state, isA<MenuOpen>());
     });
   });
 

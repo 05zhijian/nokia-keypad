@@ -1,5 +1,8 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
+import '../state/phone_state.dart';
 import '../theme/nokia_colors.dart';
 import '../theme/nokia_font.dart';
 import '../theme/nokia_metrics.dart';
@@ -13,7 +16,8 @@ class LcdScreen extends StatelessWidget {
     super.key,
     required this.width,
     required this.height,
-    required this.lines,
+    this.lines = const [],
+    this.grid,
     this.highlightedLine,
     this.softLeft = '',
     this.softRight = '',
@@ -24,6 +28,9 @@ class LcdScreen extends StatelessWidget {
   final double width;
   final double height;
   final List<String> lines;
+
+  /// 点阵内容（贪吃蛇）。给了这个就画点阵，忽略 [lines]。
+  final LcdGrid? grid;
 
   /// 反白显示的行号。主菜单用它标出当前选中项。
   final int? highlightedLine;
@@ -74,26 +81,31 @@ class LcdScreen extends StatelessWidget {
           ),
           SizedBox(height: height * 0.05),
           Expanded(
-            // 内容超出屏高时直接裁掉。诺基亚是按屏翻页的，
-            // 不做平滑滚动，所以这里用 ClipRect + OverflowBox 而不是滚动视图。
-            child: ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.topLeft,
-                maxHeight: double.infinity,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (var i = 0; i < lines.length; i++)
-                      _Line(
-                        text: lines[i],
-                        highlighted: i == highlightedLine,
-                        fontSize: textSize,
+            child: grid != null
+                ? CustomPaint(
+                    size: Size.infinite,
+                    painter: _GridPainter(grid: grid!),
+                  )
+                // 内容超出屏高时直接裁掉。诺基亚是按屏翻页的，
+                // 不做平滑滚动，所以这里用 ClipRect + OverflowBox 而不是滚动视图。
+                : ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.topLeft,
+                      maxHeight: double.infinity,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (var i = 0; i < lines.length; i++)
+                            _Line(
+                              text: lines[i],
+                              highlighted: i == highlightedLine,
+                              fontSize: textSize,
+                            ),
+                        ],
                       ),
-                  ],
-                ),
-              ),
-            ),
+                    ),
+                  ),
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -143,6 +155,59 @@ class _Line extends StatelessWidget {
       child: Text(text, style: style),
     );
   }
+}
+
+/// 点阵内容的绘制（贪吃蛇）。
+///
+/// 格子取正方形、尽量填满可用区域并居中；外面再套一圈边框——真机的贪吃蛇
+/// 也有边框，而且边框让「撞墙就死」这件事有了视觉依据。
+///
+/// 没吃到食物时尾巴会挪走，所以头钻进原来尾巴那一格是合法的。
+class _GridPainter extends CustomPainter {
+  const _GridPainter({required this.grid});
+
+  final LcdGrid grid;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // 留出约 0.8 格给边框，剩下按正方形格子铺满。
+    final cell = math.min(
+      size.width / (grid.columns + 0.8),
+      size.height / (grid.rows + 0.8),
+    );
+    final fieldWidth = cell * grid.columns;
+    final fieldHeight = cell * grid.rows;
+    final left = (size.width - fieldWidth) / 2;
+    final top = (size.height - fieldHeight) / 2;
+
+    final ink = Paint()..color = NokiaColors.lcdInk;
+
+    for (var y = 0; y < grid.rows; y++) {
+      for (var x = 0; x < grid.columns; x++) {
+        if (!grid.at(x, y)) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(left + x * cell, top + y * cell, cell, cell),
+          ink,
+        );
+      }
+    }
+
+    canvas.drawRect(
+      Rect.fromLTWH(
+        left - cell * 0.4,
+        top - cell * 0.4,
+        fieldWidth + cell * 0.8,
+        fieldHeight + cell * 0.8,
+      ),
+      Paint()
+        ..color = NokiaColors.lcdInk
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1, cell * 0.12),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _GridPainter old) => old.grid != grid;
 }
 
 /// 状态栏：左起信号格 +（有未读时）信封图标 +（编辑态）大小写提示，右侧电池。
